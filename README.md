@@ -77,3 +77,35 @@ pytest -q
 - Add observability (OpenTelemetry traces, metrics, structured logs).
 - Add tenant isolation and audit logging for healthcare compliance.
 
+## UI (React) screens
+
+A minimal client-ready UI lives in `ui/` (separate from the FastAPI backend).
+
+### Screens
+
+- `Reception` (`/reception`): receptionist checks patients in (creates tasks) and triggers recompute.
+- `Station` (`/station/:stationId`): station operator starts/completes the assigned patient.
+- `Display` (`/display`): read-only screen for waiting area (busy/free + ETA + queue).
+
+### Configure UI env
+
+Copy `ui/.env.example` to `ui/.env` and set:
+
+- `VITE_API_BASE_URL` (e.g. `http://localhost:8000`)
+- `VITE_API_KEY` (must match backend `APP_API_KEY`)
+
+### Run UI (PowerShell)
+
+```powershell
+cd ui
+npm install
+Copy-Item .env.example .env
+# edit ui/.env
+npm run dev
+```
+
+Then open:
+
+- http://localhost:5173/reception
+- http://localhost:5173/station/1
+- http://localhost:5173/display

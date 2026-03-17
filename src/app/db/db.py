@@ -1,9 +1,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-from app.core.config import settings
+from src.app.core.config import settings
 
-print(f"Connecting to database {settings.DB_URL} with schema {settings.DB_SCHEMA}")
 engine = create_engine(
     settings.DB_URL,
     connect_args={"options": f"-csearch_path={settings.DB_SCHEMA}"},

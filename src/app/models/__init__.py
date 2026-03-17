@@ -1,4 +1,4 @@
-from app.models.models import Patient, Station, TaskStatus, VisitTask
+from src.app.models.models import Patient, Station, TaskStatus, VisitTask
 
 __all__ = [
     "Patient",
