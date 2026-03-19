@@ -34,10 +34,10 @@ class Patient(Base):
 
     # Check-in/Check-out timestamps (UTC)
     checked_in_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now(), index=True
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
     )
-    checked_out_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now(), index=True
+    checked_out_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, default=None, index=True
     )
 
     tasks: Mapped[list["VisitTask"]] = relationship(

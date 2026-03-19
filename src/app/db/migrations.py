@@ -102,3 +102,68 @@ def ensure_taskstatus_enum(engine: Engine, schema: str = "public") -> None:
             logger.info("Updated enum %s.taskstatus; added %s", enum_schema, missing)
         else:
             logger.info("Enum %s.taskstatus already contains %s", enum_schema, desired)
+
+
+def fix_patient_checked_out_default(engine: Engine) -> None:
+    """Best-effort fix for earlier bug where Patient.checked_out_at defaulted to NOW.
+
+    Symptoms:
+    - Newly created patients immediately appear 'checked out' because checked_out_at is non-null.
+
+    This migration is intentionally conservative:
+    - Only for sqlite/postgres.
+    - For existing rows, it sets checked_out_at to NULL when it matches checked_in_at exactly
+      (common when both columns used the same NOW default).
+    """
+
+    dialect = engine.dialect.name
+
+    with engine.begin() as conn:
+        if dialect == "sqlite":
+            # SQLite can't easily drop column defaults without table rebuild.
+            # Just fix existing rows.
+            conn.execute(
+                text(
+                    """
+                    UPDATE patients
+                    SET checked_out_at = NULL
+                    WHERE checked_out_at IS NOT NULL
+                      AND checked_in_at IS NOT NULL
+                      AND checked_out_at = checked_in_at
+                    """
+                )
+            )
+            logger.info("Migration: fixed patients.checked_out_at for sqlite")
+            return
+
+        if dialect == "postgresql":
+            # 1) Drop server-side column default if it exists
+            try:
+                conn.execute(
+                    text(
+                        "ALTER TABLE patients ALTER COLUMN checked_out_at DROP DEFAULT"
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                # Ignore if column/table doesn't exist yet
+                pass
+
+            # 2) Fix existing rows
+            conn.execute(
+                text(
+                    """
+                    UPDATE patients
+                    SET checked_out_at = NULL
+                    WHERE checked_out_at IS NOT NULL
+                      AND checked_in_at IS NOT NULL
+                      AND checked_out_at = checked_in_at
+                    """
+                )
+            )
+            logger.info("Migration: fixed patients.checked_out_at for postgres")
+            return
+
+        # Other dialects: no-op
+        logger.info(
+            "Migration: fix_patient_checked_out_default skipped for %s", dialect
+        )
