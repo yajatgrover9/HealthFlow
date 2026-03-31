@@ -18,6 +18,31 @@ export default function ReceptionPage() {
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryResult, setSummaryResult] = useState<AIInsightOut | null>(null);
 
+  type PatientTodayRow = {
+    patient_id: number;
+    external_id: string;
+    checked_in_at: string;
+    checked_out_at: string | null;
+    stations_in_order: string[];
+    total_tasks: number;
+    done_tasks: number;
+    pending_tasks: number;
+    assigned_tasks: number;
+    in_progress_tasks: number;
+  };
+
+  type PatientsTodayOut = {
+    date: string;
+    total_patients: number;
+    checked_out_patients: number;
+    active_patients: number;
+    rows: PatientTodayRow[];
+  };
+
+  const [patientsToday, setPatientsToday] = useState<PatientsTodayOut | null>(null);
+  const [patientsTodayError, setPatientsTodayError] = useState<string | null>(null);
+  const [statsFilterDate, setStatsFilterDate] = useState<string>('');
+
   const activePatients = useMemo(
     () => patients.filter((p) => p.checked_out_at == null),
     [patients]
@@ -29,8 +54,32 @@ export default function ReceptionPage() {
     setPatients(pt);
   }
 
+  async function refreshPatientsToday() {
+    try {
+      setPatientsTodayError(null);
+      const base = (import.meta.env.VITE_API_BASE_URL as string).replace(/\/$/, '');
+      const res = await fetch(`${base}/v1/stats/today`, {
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': import.meta.env.VITE_API_KEY as string,
+        },
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`${res.status} ${res.statusText}: ${txt}`);
+      }
+      const data = (await res.json()) as PatientsTodayOut;
+      setPatientsToday(data);
+      // initialise filter date to today's date from backend
+      setStatsFilterDate(data.date);
+    } catch (e) {
+      setPatientsTodayError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   useEffect(() => {
     refreshAll().catch((e) => setError(String(e)));
+    refreshPatientsToday().catch(() => undefined);
   }, []);
 
   function toggleStation(id: number) {
@@ -82,81 +131,209 @@ export default function ReceptionPage() {
     }
   }
 
+  async function checkout(p: PatientOut) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.checkoutPatient(p.id);
+      await refreshAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // derive filtered rows (date filter is simple here because backend returns one date per call)
+  const filteredTodayRows = useMemo(() => {
+    if (!patientsToday) return [];
+    if (!statsFilterDate || statsFilterDate === patientsToday.date) return patientsToday.rows;
+    // if user changes date away from today, we currently have no historical API; return empty
+    return [];
+  }, [patientsToday, statsFilterDate]);
+
   return (
-    <div className="grid">
-      <section className="card">
-        <h2>Reception: Check-in</h2>
-        <div className="row">
-          <label className="label">
-            Patient external id
-            <input value={externalId} onChange={(e) => setExternalId(e.target.value)} />
-          </label>
-        </div>
-
-        <div>
-          <div className="label" style={{ marginBottom: 8 }}>Select stations in order (click to add/remove)</div>
-          <div className="chips">
-            {stations.map((s) => {
-              const active = selectedStationIds.includes(s.id);
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={active ? 'chip chipActive' : 'chip'}
-                  onClick={() => toggleStation(s.id)}
-                >
-                  {s.name} ({s.avg_duration_min}m)
-                </button>
-              );
-            })}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* Top row: check-in (wider) + active patients (narrower) side by side */}
+      <div className="grid" style={{ gridTemplateColumns: '4fr 2fr' }}>
+        {/* Check-in section */}
+        <section className="card">
+          <h2>Reception: Check-in</h2>
+          <div className="row">
+            <label className="label">
+              Patient external id
+              <input value={externalId} onChange={(e) => setExternalId(e.target.value)} />
+            </label>
           </div>
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-            Current order: {selectedStationIds.join(' → ') || '(none)'}
+
+          <div>
+            <div className="label" style={{ marginBottom: 8 }}>Select stations in order (click to add/remove)</div>
+            <div className="chips">
+              {stations.map((s) => {
+                const active = selectedStationIds.includes(s.id);
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className={active ? 'chip chipActive' : 'chip'}
+                    onClick={() => toggleStation(s.id)}
+                  >
+                    {s.name} ({s.avg_duration_min}m)
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+              Current order: {selectedStationIds.join(' → ') || '(none)'}
+            </div>
           </div>
-        </div>
 
-        <div className="row" style={{ marginTop: 12, gap: 8 }}>
-          <button className="primaryBtn" disabled={busy} onClick={checkIn}>Check-in & recompute</button>
-          <button disabled={busy} onClick={() => api.recompute().then(refreshAll)}>Recompute</button>
-          <button disabled={busy} onClick={() => refreshAll()}>Refresh</button>
-        </div>
+          <div className="row" style={{ marginTop: 12, gap: 8 }}>
+            <button className="primaryBtn" disabled={busy} onClick={checkIn}>Check-in & recompute</button>
+            <button disabled={busy} onClick={() => api.recompute().then(refreshAll)}>Recompute</button>
+            <button disabled={busy} onClick={() => refreshAll()}>Refresh</button>
+          </div>
 
-        {error && <div className="error">{error}</div>}
-      </section>
+          {error && <div className="error">{error}</div>}
+        </section>
 
-      <section className="card">
-        <h2>Active patients</h2>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>external_id</th>
-              <th>checked_in_at</th>
-              <th>checked_out_at</th>
-              <th style={{ width: 220 }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {activePatients.map((p) => (
-              <tr key={p.id}>
-                <td>{p.id}</td>
-                <td>{p.external_id}</td>
-                <td>{new Date(p.checked_in_at).toLocaleString()}</td>
-                <td>{p.checked_out_at ? new Date(p.checked_out_at).toLocaleString() : '-'}</td>
-                <td>
-                  <button onClick={() => openSummary(p)}>Generate summary</button>
-                </td>
-              </tr>
-            ))}
-            {activePatients.length === 0 && (
+        {/* Active patients section */}
+        <section className="card">
+          <h2>Active patients</h2>
+          <table className="table">
+            <thead>
               <tr>
-                <td colSpan={5} style={{ opacity: 0.8 }}>No active patients</td>
+                <th>ID</th>
+                <th>external_id</th>
+                <th>checked_in_at</th>
+                <th>checked_out_at</th>
+                <th style={{ width: 260 }}>Actions</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {activePatients.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.id}</td>
+                  <td>{p.external_id}</td>
+                  <td>{new Date(p.checked_in_at).toLocaleString()}</td>
+                  <td>{p.checked_out_at ? new Date(p.checked_out_at).toLocaleString() : '-'}</td>
+                  <td>
+                    <button onClick={() => openSummary(p)} disabled={busy}>Generate summary</button>
+                    <button onClick={() => checkout(p)} disabled={busy} style={{ marginLeft: 8 }}>
+                      Check-out
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {activePatients.length === 0 && (
+                <tr>
+                  <td colSpan={5} style={{ opacity: 0.8 }}>No active patients</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+      </div>
+
+      {/* Bottom row: stats full width */}
+      <section className="card" style={{ width: '100%' }}>
+        {/* Today’s patients stats section */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            gap: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div>
+            <h2 style={{ margin: 0 }}>Today’s patients</h2>
+            <div style={{ fontSize: 12, opacity: 0.8 }}>UTC date: {patientsToday?.date ?? '-'}</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>Date (UTC, today only):</span>
+              <input
+                type="date"
+                value={statsFilterDate}
+                onChange={(e) => setStatsFilterDate(e.target.value)}
+                style={{ maxWidth: 150 }}
+              />
+            </label>
+            <button onClick={() => refreshPatientsToday().catch(() => undefined)}>Refresh</button>
+          </div>
+        </div>
+
+        {patientsTodayError && <div className="error">{patientsTodayError}</div>}
+
+        <div style={{ marginTop: 4 }}>
+          {patientsToday && (
+            <div className="row" style={{ alignItems: 'center', marginBottom: 8 }}>
+              <div><b>Total:</b> {patientsToday.total_patients}</div>
+              <div><b>Active:</b> {patientsToday.active_patients}</div>
+              <div><b>Checked out:</b> {patientsToday.checked_out_patients}</div>
+            </div>
+          )}
+
+          <div style={{ marginTop: 4, overflowX: 'auto', minHeight: 140 }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Ticket</th>
+                  <th>Check-in</th>
+                  <th>Check-out</th>
+                  <th>Plan</th>
+                  <th>Progress</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTodayRows.map((r) => {
+                  const pct = r.total_tasks > 0 ? Math.round((r.done_tasks / r.total_tasks) * 100) : 0;
+                  return (
+                    <tr key={r.patient_id}>
+                      <td>{r.patient_id}</td>
+                      <td>{r.external_id}</td>
+                      <td>{new Date(r.checked_in_at).toLocaleTimeString()}</td>
+                      <td>{r.checked_out_at ? new Date(r.checked_out_at).toLocaleTimeString() : '-'}</td>
+                      <td style={{ minWidth: 360 }}>
+                        {r.stations_in_order.join(' → ')}
+                      </td>
+                      <td style={{ minWidth: 220 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>{r.done_tasks}/{r.total_tasks} done</span>
+                          <span style={{ opacity: 0.75 }}>{pct}%</span>
+                        </div>
+                        <div style={{ height: 10, borderRadius: 999, background: 'rgba(15,23,42,0.08)', marginTop: 6 }}>
+                          <div
+                            style={{
+                              height: 10,
+                              borderRadius: 999,
+                              width: `${pct}%`,
+                              background: pct === 100 ? 'rgba(22,163,74,0.8)' : 'rgba(37,99,235,0.8)',
+                            }}
+                          />
+                        </div>
+                        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
+                          pending {r.pending_tasks} • assigned {r.assigned_tasks} • in_progress {r.in_progress_tasks}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredTodayRows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} style={{ opacity: 0.8 }}>No patients for selected date.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
+      {/* existing summary modal */}
       {summaryOpen && summaryPatient && (
         <div className="modalOverlay" role="dialog" aria-modal="true">
           <div className="modal">

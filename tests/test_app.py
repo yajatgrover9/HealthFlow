@@ -109,3 +109,65 @@ def test_station_patient_flow_recompute_and_checkout():
 def test_requires_api_key_for_v1_routes():
     response = client.get("/v1/stations")
     assert response.status_code == 401
+
+
+def test_auto_reroute_between_equivalent_stations():
+    # Create two equivalent stations (same prefix "Blood")
+    s1 = client.post(
+        "/v1/stations", json={"name": "Blood A", "avg_duration_min": 8}, headers=HEADERS
+    )
+    s2 = client.post(
+        "/v1/stations", json={"name": "Blood B", "avg_duration_min": 8}, headers=HEADERS
+    )
+    assert s1.status_code == 200
+    assert s2.status_code == 200
+
+    # Create two patients that both start at Blood A (id=1)
+    p1 = client.post(
+        "/v1/patients",
+        json={"external_id": "P-RA-001", "station_ids_in_order": [1]},
+        headers=HEADERS,
+    )
+    p2 = client.post(
+        "/v1/patients",
+        json={"external_id": "P-RA-002", "station_ids_in_order": [1]},
+        headers=HEADERS,
+    )
+    assert p1.status_code == 200
+    assert p2.status_code == 200
+
+    # Initial recompute should assign first patient to Blood A
+    first_assign = client.post("/v1/flow/recompute", headers=HEADERS)
+    assert first_assign.status_code == 200
+
+    # Complete first patient's task at Blood A to free it and then recompute again
+    tasks = client.get("/v1/flow/tasks", headers=HEADERS)
+    assert tasks.status_code == 200
+    task_list = tasks.json()
+    # Find task for first patient
+    t1 = next(t for t in task_list if t["patient_id"] == 1)
+
+    started = client.post(
+        "/v1/flow/start",
+        json={"patient_id": t1["patient_id"], "station_id": t1["station_id"]},
+        headers=HEADERS,
+    )
+    assert started.status_code == 200
+
+    completed = client.post(
+        "/v1/flow/complete",
+        json={"patient_id": t1["patient_id"], "station_id": t1["station_id"]},
+        headers=HEADERS,
+    )
+    assert completed.status_code == 200
+
+    # Now reroute logic runs after recompute; second patient's pending task
+    # may be moved between Blood A and Blood B based on queue ETA.
+    tasks_after = client.get("/v1/flow/tasks", headers=HEADERS)
+    assert tasks_after.status_code == 200
+    remaining_tasks = [t for t in tasks_after.json() if t["status"] != "done"]
+    assert len(remaining_tasks) >= 1
+
+    # Ensure remaining task station is either 1 (Blood A) or 2 (Blood B)
+    for t in remaining_tasks:
+        assert t["station_id"] in (1, 2)

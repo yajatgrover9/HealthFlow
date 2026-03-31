@@ -73,6 +73,9 @@ export const api = {
   createPatient(payload: PatientCreate): Promise<PatientOut> {
     return http('/v1/patients', { method: 'POST', body: JSON.stringify(payload) });
   },
+  checkoutPatient(patientId: number): Promise<PatientOut> {
+    return http(`/v1/patients/${patientId}/checkout`, { method: 'POST' });
+  },
 
   // Flow
   recompute(): Promise<AssignmentOut[]> {

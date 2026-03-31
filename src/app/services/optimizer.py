@@ -16,15 +16,20 @@ def _utcnow() -> datetime:
 
 
 def recompute_assignments(db: Session) -> list[dict]:
-    """Assign one eligible pending task per active station using arrival-order fairness.
+    """Assign pending tasks to stations using arrival-order fairness.
 
-    Rules (MVP, production-safe):
+    Rules (MVP, queue-aware):
     - We only assign tasks in `pending` state.
     - We never touch `in_progress` or `done` tasks.
     - We DO NOT blindly reset previously assigned tasks; that can corrupt station screens.
-      Instead, recompute will only assign if station has no `assigned` and no `in_progress`.
+      Instead, recompute will only assign if station has *capacity* for another
+      `assigned` task.
+    - Capacity rule (simple): one "current" in-progress task is allowed plus
+      up to one queued `assigned` task per station. If a station already has an
+      assigned task, we skip assigning another one.
 
-    This keeps station UX stable and avoids races where a station loses its "next patient".
+    This keeps station UX stable, exposes a visible "next" patient while busy,
+    and avoids races where a station loses its next patient.
     """
 
     try:
@@ -35,23 +40,25 @@ def recompute_assignments(db: Session) -> list[dict]:
 
         for station in stations:
             station_id = int(getattr(station, "id"))
-            existing = (
+
+            # Count already-assigned tasks for this station
+            assigned_task = (
                 db.execute(
-                    select(VisitTask.id)
+                    select(VisitTask)
                     .where(
                         VisitTask.station_id == station_id,
-                        VisitTask.status.in_(
-                            [TaskStatus.assigned, TaskStatus.in_progress]
-                        ),
+                        VisitTask.status == TaskStatus.assigned,
                     )
                     .order_by(VisitTask.assigned_at.desc().nulls_last())
                 )
                 .scalars()
                 .first()
             )
-            if existing is not None:
+            if assigned_task is not None:
+                # Station already has a queued "next" patient; do not assign more
                 continue
 
+            # Find pending tasks for this station, ordered by sequence then patient
             pending_tasks = (
                 db.execute(
                     select(VisitTask)
@@ -125,20 +132,7 @@ def mark_task_done(db: Session, task: VisitTask) -> VisitTask:
         pid = int(getattr(task, "patient_id"))
         patient = db.get(Patient, pid)
 
-        if patient is not None and getattr(patient, "checked_out_at", None) is None:
-            remaining = (
-                db.execute(
-                    select(VisitTask.id).where(
-                        VisitTask.patient_id == pid,
-                        VisitTask.status != TaskStatus.done,
-                    )
-                )
-                .scalars()
-                .first()
-            )
-            if remaining is None:
-                patient.checked_out_at = _utcnow()
-                logger.info("optimizer.checked_out patient_id=%s", pid)
+        # Do NOT auto-checkout here; checkout is now an explicit reception action.
 
         db.commit()
         db.refresh(task)

@@ -21,6 +21,7 @@ from src.app.services.optimizer import (
     mark_patient_task_started,
     recompute_assignments,
 )
+from src.app.services.rerouter import auto_reroute_pending_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,8 @@ router = APIRouter(dependencies=[Depends(require_api_key)])
 def recompute_flow(db: Session = Depends(get_db)):
     try:
         assignments = recompute_assignments(db)
+        # run lightweight auto-reroute after base assignments
+        auto_reroute_pending_tasks(db)
         logger.info("flow.recompute assignments=%s", len(assignments))
         return assignments
     except Exception as e:  # noqa: BLE001
@@ -106,6 +109,8 @@ def complete_and_recompute(payload: CompleteTaskIn, db: Session = Depends(get_db
                 logger.info("patient.checked_out patient_id=%s", payload.patient_id)
 
         assignments = recompute_assignments(db)
+        # run lightweight auto-reroute after recomputation
+        auto_reroute_pending_tasks(db)
         logger.info("flow.complete ok new_assignments=%s", len(assignments))
         return assignments
     except HTTPException:

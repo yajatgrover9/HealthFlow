@@ -84,8 +84,18 @@ A minimal client-ready UI lives in `ui/` (separate from the FastAPI backend).
 ### Screens
 
 - `Reception` (`/reception`): receptionist checks patients in (creates tasks) and triggers recompute.
-- `Station` (`/station/:stationId`): station operator starts/completes the assigned patient.
+- `Station` (`/station` and `/station/:stationId`): station operator starts/completes the assigned patient. Both routes use the same Station view; the optional `stationId` path parameter can be used to deep-link a specific station.
 - `Display` (`/display`): read-only screen for waiting area (busy/free + ETA + queue).
+
+### Routing overview
+
+- Root path `/` redirects to `/reception`.
+- Top navigation links point to `/reception`, `/station`, and `/display`.
+- All UI routing is defined in `ui/src/routes/App.tsx` using `react-router-dom` `Routes` and `Route` components.
+
+### Developer notes
+
+- `ui/src/routes/App.tsx` defines the top-level layout (header + navigation) and wires the Reception, Station, and Display pages to the routes above.
 
 ### Configure UI env
 
@@ -107,5 +117,6 @@ npm run dev
 Then open:
 
 - http://localhost:5173/reception
+- http://localhost:5173/station
 - http://localhost:5173/station/1
 - http://localhost:5173/display

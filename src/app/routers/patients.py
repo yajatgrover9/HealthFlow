@@ -92,3 +92,34 @@ def list_patients(db: Session = Depends(get_db)):
     except Exception as e:  # noqa: BLE001
         logger.error("patients.list error=%s", e)
         raise
+
+
+@router.post("/patients/{patient_id}/checkout", response_model=PatientOut)
+def checkout_patient(patient_id: int, db: Session = Depends(get_db)):
+    """Explicitly mark a patient as checked out from reception.
+
+    This endpoint sets `checked_out_at` only when reception decides to check out
+    the patient, rather than auto-checking-out purely based on task completion.
+    """
+
+    try:
+        patient = db.get(Patient, patient_id)
+        if patient is None:
+            raise HTTPException(status_code=404, detail="Patient not found")
+
+        if getattr(patient, "checked_out_at", None) is not None:
+            # Idempotent: return existing patient if already checked out
+            return patient
+
+        from datetime import datetime, timezone
+
+        patient.checked_out_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(patient)
+        logger.info("patients.checkout ok patient_id=%s", patient_id)
+        return patient
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.error("patients.checkout error patient_id=%s err=%s", patient_id, e)
+        raise
