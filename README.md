@@ -1,50 +1,142 @@
-# HealthFlow FastAPI MVP
+# HealthFlow – Real‑Time Patient Flow Orchestration
 
-Production-leaning FastAPI backend for patient-flow orchestration with PostgreSQL-ready configuration.
+HealthFlow is a small, production‑leaning FastAPI + React app that simulates how a clinic or urgent‑care center can manage patient flow in real time.
 
-## What is included
+At a high level, it:
 
-- FastAPI app with modular routers
-- SQLAlchemy models for stations, patients, and visit tasks
-- Deterministic real-time recompute endpoint for station assignments
-- Task completion endpoint that triggers immediate recompute
-- API key protection for all `/v1/*` endpoints
-- Pytest tests covering protected API flow
+- Tracks patients as they move through stations (e.g., reception, triage, exam rooms).
+- Continuously recomputes which patient should go to which station next.
+- Gives staff a simple UI to check patients in, work their queue, and complete visits.
+- Exposes a clean, API‑key‑protected backend that could be wired into a real hospital system.
 
-## Project structure
+---
 
-- `app/main.py` - FastAPI app entrypoint
-- `app/config.py` - settings loaded from `.env`
-- `app/security.py` - API key auth dependency
-- `app/db.py` - SQLAlchemy engine/session
-- `app/models.py` - domain models
-- `app/routers/` - API routes
-- `app/services/optimizer.py` - assignment logic
-- `app/startup.py` - local table bootstrap helper
-- `tests/test_app.py` - API tests
-- `.env.example` - environment variable template
+## What the app does
 
-## Environment setup
+### Domain model
 
-Copy `.env.example` to `.env` and set strong secrets.
+- **Stations** – Work areas such as Reception, Triage, Lab, Exam Room 1, etc. Each station has a name and can have multiple tasks queued.
+- **Patients** – Individuals visiting the clinic. A patient can have one or more **visit tasks** assigned.
+- **Visit tasks** – Units of work that need to be performed for a patient at a given station (e.g., "Triage vitals", "Doctor consult").
 
-Required keys:
-- `APP_API_KEY`
-- `DATABASE_URL`
+The system’s goal is to keep stations productive and patients moving by always knowing:
 
-## Quick start (Windows PowerShell)
+- Which tasks are waiting.
+- Which stations are free or busy.
+- Which task should be worked on next at each station.
+
+### Flow orchestration logic
+
+The backend contains an optimizer service that acts as a simple orchestration engine:
+
+1. **Reception creates tasks** when a patient arrives (check‑in).
+2. The **optimizer recomputes assignments** whenever:
+   - a new task is created, or
+   - a task is completed.
+3. On recompute, the service assigns waiting tasks to available stations in a deterministic, priority‑driven way.
+4. Stations then fetch and work their assigned tasks until completion, triggering another recompute.
+
+This loop approximates a real‑world flow engine while staying small enough to understand in one sitting.
+
+---
+
+## How the pieces fit together
+
+### Backend (FastAPI)
+
+Located in `src/app/`:
+
+- `main.py` – FastAPI entrypoint and router wiring.
+- `routers/` – Versioned `/v1/*` endpoints for stations, patients, flow orchestration, stats, and insights.
+- `models/` – SQLAlchemy models and Pydantic schemas for stations, patients, and tasks.
+- `services/optimizer.py` – Core assignment and recompute logic.
+- `services/eta.py` and `services/flow_snapshot.py` – Compute ETAs and capture current flow state for the UI.
+- `db/` – Database engine/session and migration helpers (PostgreSQL‑ready but works with SQLite for local dev).
+- `auth/security.py` – Simple API‑key authentication.
+
+Key capabilities:
+
+- **Real‑time recompute** – `POST /v1/flow/recompute` recalculates station assignments based on current state.
+- **Task lifecycle** – `POST /v1/flow/complete` marks tasks done and triggers a new recompute.
+- **Observability hooks** – Structured logging helpers that can be extended for production telemetry.
+- **Stats & insights** – Endpoints to surface basic performance metrics (queue lengths, throughput, etc.).
+
+### Frontend (React + Vite)
+
+Located in `ui/`:
+
+- Built with React, TypeScript, and Vite.
+- Talks to the FastAPI backend through `ui/src/services/api.ts`.
+
+Screens:
+
+- **Reception (`/reception`)** –
+  - Check patients in (create tasks).
+  - Trigger a recompute.
+  - See which stations are available and who is waiting.
+- **Station (`/station`, `/station/:stationId`)** –
+  - Station operator’s view: see your current assignment and queue.
+  - Start/complete work, which calls the backend and triggers recompute.
+- **Display (`/display`)** –
+  - Read‑only waiting‑room display.
+  - Shows which stations are busy, which are free, and patient ETAs/queues.
+- **Stats (`/stats`)** –
+  - High‑level metrics about flow performance (visit counts, wait times, etc.).
+
+The goal of the UI is to make the orchestration behavior easy to see without needing to call the API manually.
+
+---
+
+## Project structure (high level)
+
+Backend (Python):
+
+- `src/app/main.py` – FastAPI app entrypoint
+- `src/app/core/` – configuration & logging
+- `src/app/auth/security.py` – API key auth dependency
+- `src/app/db/` – SQLAlchemy engine, session, and migrations helpers
+- `src/app/models/` – domain models and Pydantic schemas
+- `src/app/routers/` – API routes (stations, patients, flow, stats, insights)
+- `src/app/services/` – orchestration, ETA, insights, and rerouting logic
+- `tests/test_app.py` – backend tests
+
+Frontend (TypeScript / React):
+
+- `ui/src/main.tsx` – React entrypoint
+- `ui/src/routes/App.tsx` – top‑level layout and routing
+- `ui/src/routes/*.tsx` – individual pages (Reception, Station, Display, Stats)
+- `ui/src/services/api.ts` – typed client for backend API
+
+---
+
+## Environment setup (backend)
+
+Copy `.env.example` (if present) to `.env` and set strong secrets.
+
+Required keys (see `src/app/core/config.py`):
+
+- `APP_API_KEY` – shared secret for backend and UI
+- `DATABASE_URL` – e.g. `sqlite+aiosqlite:///./healthflow.db` for local dev, or a PostgreSQL URL in production.
+
+### Quick start (Windows PowerShell)
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+# Create and configure .env
 Copy-Item .env.example .env
 # Edit .env before starting
-python -c "from app.startup import init_db; init_db()"
-uvicorn app.main:app --reload
+
+# Optional: run any DB bootstrap/migrations script if present
+# e.g., python -m src.app.db.migrations
+
+uvicorn src.app.main:app --reload
 ```
 
-## API authentication
+The API will be available at `http://localhost:8000`.
+
+### API authentication
 
 All `/v1/*` endpoints require this header:
 
@@ -52,71 +144,50 @@ All `/v1/*` endpoints require this header:
 
 `/health` is intentionally public.
 
-## Run tests
+### Run backend tests
 
 ```powershell
 pytest -q
 ```
 
-## Core API endpoints
+---
 
-- `GET /health`
-- `POST /v1/stations`
-- `GET /v1/stations`
-- `POST /v1/patients`
-- `GET /v1/patients`
-- `POST /v1/flow/recompute`
-- `POST /v1/flow/complete`
-- `GET /v1/flow/tasks`
+## Environment setup (UI)
 
-## Notes for production hardening
-
-- Add Alembic migrations and remove `create_all` bootstrap in runtime paths.
-- Add rotation policy for API keys and eventually migrate to OAuth2/JWT + RBAC.
-- Move recompute to event queue (Redis/Kafka + worker) for high-throughput facilities.
-- Add observability (OpenTelemetry traces, metrics, structured logs).
-- Add tenant isolation and audit logging for healthcare compliance.
-
-## UI (React) screens
-
-A minimal client-ready UI lives in `ui/` (separate from the FastAPI backend).
-
-### Screens
-
-- `Reception` (`/reception`): receptionist checks patients in (creates tasks) and triggers recompute.
-- `Station` (`/station` and `/station/:stationId`): station operator starts/completes the assigned patient. Both routes use the same Station view; the optional `stationId` path parameter can be used to deep-link a specific station.
-- `Display` (`/display`): read-only screen for waiting area (busy/free + ETA + queue).
-
-### Routing overview
-
-- Root path `/` redirects to `/reception`.
-- Top navigation links point to `/reception`, `/station`, and `/display`.
-- All UI routing is defined in `ui/src/routes/App.tsx` using `react-router-dom` `Routes` and `Route` components.
-
-### Developer notes
-
-- `ui/src/routes/App.tsx` defines the top-level layout (header + navigation) and wires the Reception, Station, and Display pages to the routes above.
-
-### Configure UI env
-
-Copy `ui/.env.example` to `ui/.env` and set:
-
-- `VITE_API_BASE_URL` (e.g. `http://localhost:8000`)
-- `VITE_API_KEY` (must match backend `APP_API_KEY`)
-
-### Run UI (PowerShell)
+From the project root:
 
 ```powershell
 cd ui
 npm install
 Copy-Item .env.example .env
-# edit ui/.env
+# Edit ui/.env so that VITE_API_BASE_URL and VITE_API_KEY match your backend
 npm run dev
 ```
 
-Then open:
+Required UI env keys:
 
-- http://localhost:5173/reception
-- http://localhost:5173/station
-- http://localhost:5173/station/1
-- http://localhost:5173/display
+- `VITE_API_BASE_URL` (e.g. `http://localhost:8000`)
+- `VITE_API_KEY` (must match backend `APP_API_KEY`)
+
+Then open in your browser:
+
+- `http://localhost:5173/reception`
+- `http://localhost:5173/station`
+- `http://localhost:5173/station/1`
+- `http://localhost:5173/display`
+- `http://localhost:5173/stats`
+
+---
+
+## Core backend API endpoints (summary)
+
+- `GET /health` – healthcheck
+- `POST /v1/stations` – create stations
+- `GET /v1/stations` – list stations
+- `POST /v1/patients` – create patients
+- `GET /v1/patients` – list patients
+- `POST /v1/flow/recompute` – recompute station assignments
+- `POST /v1/flow/complete` – complete a task and recompute
+- `GET /v1/flow/tasks` – list current tasks & assignments
+- `GET /v1/stats/*` and `/v1/insights/*` – stats and analytics endpoints
+
