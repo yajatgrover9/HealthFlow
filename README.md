@@ -1,6 +1,6 @@
 # HealthFlow – Real‑Time Patient Flow Orchestration
 
-HealthFlow is a small, production‑leaning FastAPI + React app that simulates how a clinic or urgent‑care center can manage patient flow in real time.
+HealthFlow is a production‑leaning FastAPI + React app that simulates how a clinic or urgent‑care center can manage patient flow in real time.
 
 At a high level, it:
 
